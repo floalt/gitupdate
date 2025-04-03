@@ -53,6 +53,13 @@ while IFS=";" read -r SCRIPT_FILE SCRIPT_PATH SCRIPT_URL || [[ -n "$SCRIPT_FILE"
     # Download the file only if the ETag has changed
     HTTP_RESPONSE=$(curl -s -H "If-None-Match: $ETAG" -w "%{http_code}" -o "$TMP_FILE" "$SCRIPT_URL")
 
+        if [ "$HTTP_RESPONSE" -eq 400 ]; then
+            echo "Error with If-None-Match header. Retrying without it..."
+            # Retry the download without If-None-Match header
+            HTTP_RESPONSE=$(curl -s -w "%{http_code}" -o "$TMP_FILE" "$SCRIPT_URL")
+        fi
+
+
     if [ "$HTTP_RESPONSE" -eq 200 ]; then
         # Retrieve new ETag
         NEW_ETAG=$(curl -sI "$SCRIPT_URL" | grep -i "etag" | cut -d' ' -f2-)
