@@ -1,97 +1,105 @@
 #!/bin/bash
 
+### Automatic Script Updater
+#
+# Description:
+#   This script updates local scripts by downloading newer versions from GitHub.
+#   It is intended for personal use only.
+#
+# Configuration:
+#   See 'gitupdate.conf' for details.
+#
+# Author: flo.alt@it-flows.de
+# Version: 0.8
+
 SCRIPTPATH=$(dirname "$(readlink -e "$0")")
 CONFIG_FILE="$SCRIPTPATH/gitupdate.conf"
-OWNER="itflows"
 
+# Check if the configuration file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Configuration file $CONFIG_FILE not found!"
+    exit 1
+fi
 
+ALL_UPDATES_SUCCESSFUL=true  # Flag to track if all updates were successful
 
-# Prüfen, ob die Konfigurationsdatei existiert
+# Read $OWNER from config file
+OWNER="$(grep '^OWNER=' "$CONFIG_FILE" | cut -d'=' -f2)"
 
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo "Fehler: Konfigurationsdatei $CONFIG_FILE nicht gefunden!"
-        ### exit 1
-    fi
-
-ALL_UPDATES_SUCCESSFUL=true  # Flag für fehlerfreie Updates
-
-
-# Konfigurationsdatei zeilenweise einlesen
-
+# Read the configuration file line by line, skipping OWNER definition
 while IFS=";" read -r SCRIPT_FILE SCRIPT_PATH SCRIPT_URL || [[ -n "$SCRIPT_FILE" ]]; do
     
-    # Leere Zeilen oder Kommentare überspringen
-    [[ -z "$SCRIPT_FILE" || "$SCRIPT_FILE" =~ ^# ]] && continue
+    # Skip empty lines, comments, or OWNER definition
+    [[ -z "$SCRIPT_FILE" || "$SCRIPT_FILE" =~ ^# || "$SCRIPT_FILE" =~ ^OWNER= ]] && continue
 
     FULL_PATH="$SCRIPT_PATH/$SCRIPT_FILE"
     TMP_FILE="$(mktemp)"
     ETAG_FILE="$FULL_PATH.etag"
 
-    # Überprüfe, ob die Datei existiert
+    # Check if the target file exists
     if [ ! -f "$FULL_PATH" ]; then
-        echo "Fehler: Die Datei $FULL_PATH existiert nicht. Abbruch."
+        echo "Error: File $FULL_PATH does not exist. Skipping."
         ALL_UPDATES_SUCCESSFUL=false
-        continue # überspringe diese Zeile und fahre mit der nächsten fort
+        continue
     fi
 
-    # Falls vorhanden, lese das alte ETag aus
+    # Read the old ETag if available
     if [ -f "$ETAG_FILE" ]; then
         ETAG=$(cat "$ETAG_FILE")
     else
         ETAG=""
     fi
 
-    # Lade Datei nur, wenn sich der ETag geändert hat
+    # Download the file only if the ETag has changed
     HTTP_RESPONSE=$(curl -s -H "If-None-Match: $ETAG" -w "%{http_code}" -o "$TMP_FILE" "$SCRIPT_URL")
 
-    # Falls der HTTP-Code 200 ist, wurde die Datei geändert → Update speichern
     if [ "$HTTP_RESPONSE" -eq 200 ]; then
-        # ETag abrufen
+        # Retrieve new ETag
         NEW_ETAG=$(curl -sI "$SCRIPT_URL" | grep -i "etag" | cut -d' ' -f2-)
         if [ -z "$NEW_ETAG" ]; then
-            echo "Fehler: Kein ETag von $SCRIPT_URL erhalten."
+            echo "Error: No ETag received from $SCRIPT_URL."
             rm "$TMP_FILE"
             ALL_UPDATES_SUCCESSFUL=false
         fi
 
-        # Datei verschieben
+        # Move the updated file
         mv "$TMP_FILE" "$FULL_PATH"
         if [ $? -ne 0 ]; then
-            echo "Fehler beim Verschieben der Datei nach $FULL_PATH"
+            echo "Error moving file to $FULL_PATH."
             rm "$TMP_FILE"
             ALL_UPDATES_SUCCESSFUL=false
         fi
 
-        # ETag speichern
+        # Save the new ETag
         echo "$NEW_ETAG" > "$ETAG_FILE"
         if [ $? -ne 0 ]; then
-            echo "Fehler beim Schreiben des ETags in $ETAG_FILE"
+            echo "Error writing ETag to $ETAG_FILE."
             rm "$TMP_FILE"
             ALL_UPDATES_SUCCESSFUL=false
         fi
 
-        # Berechtigungen & Besitzer setzen
+        # Set permissions & ownership
         chmod 754 "$FULL_PATH"
         chown "$OWNER:root" "$FULL_PATH"
 
-        echo "Update für $SCRIPT_FILE durchgeführt."
+        echo "Update applied for $SCRIPT_FILE."
     
     elif [ "$HTTP_RESPONSE" -eq 304 ]; then
-        echo "$SCRIPT_FILE ist aktuell. Kein Update nötig."
+        echo "$SCRIPT_FILE is up to date. No update needed."
         rm "$TMP_FILE"
     
     else
-        echo "Fehler beim Abrufen von $SCRIPT_FILE (HTTP-Code: $HTTP_RESPONSE)"
+        echo "Error fetching $SCRIPT_FILE (HTTP Code: $HTTP_RESPONSE)."
         rm "$TMP_FILE"
         ALL_UPDATES_SUCCESSFUL=false
     fi
 
 done < "$CONFIG_FILE"
 
-# Wenn alle Updates erfolgreich waren, erstelle die leere Datei "lastupdate-done"
+# If all updates were successful, create the 'lastupdate-done' file
 if [ "$ALL_UPDATES_SUCCESSFUL" = true ]; then
     touch "$SCRIPTPATH/lastupdate-done"
-    echo "Alles erfolgreich. Monitoring-Datei erstellt."
+    echo "All updates successful. Monitoring file created."
 else
-    echo "Ein oder mehrere Updates fehlgeschlagen. Keine Monitoring-Datei erstellt."
+    echo "One or more updates failed. No monitoring file created."
 fi
